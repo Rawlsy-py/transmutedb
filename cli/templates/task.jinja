@@ -1,0 +1,6 @@
+import polars as pl
+
+def transform_{{ object_name }}(records: list[dict]) -> pl.DataFrame:
+    df = pl.DataFrame(records)
+    return df
+

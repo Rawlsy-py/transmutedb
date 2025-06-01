@@ -1,0 +1,7 @@
+-- Bronze table for {{ object_name }}
+CREATE TABLE bronze.{{ object_name }} (
+    id VARCHAR PRIMARY KEY,
+    payload JSONB,
+    ingestion_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
