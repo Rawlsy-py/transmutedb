@@ -1,4 +1,5 @@
 import typer
+
 from transmute.scaffold import scaffold_app
 
 app = typer.Typer()
