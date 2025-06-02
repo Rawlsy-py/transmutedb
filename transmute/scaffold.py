@@ -40,3 +40,20 @@ def scaffold_task(object_name: str = typer.Argument(..., help="Name of the objec
     output_path.write_text(rendered)
 
     typer.echo(f"✅ Created: {output_path}")
+
+
+@scaffold_app.command("sql")
+def scaffold_sql(object_name: str = typer.Argument(..., help="Name of the object")):
+    """Scaffold a task file for given object."""
+    typer.echo(f"Scaffolding: {object_name}")
+
+    env = Environment(loader=FileSystemLoader(TEMPLATES_DIR))
+    template = env.get_template("sql.jinja")
+    rendered = template.render(object_name=object_name.lower())
+
+    output_dir = Path.cwd() / "src" / "sql" / "bronze"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"create_{object_name.lower()}_table.sql"
+    output_path.write_text(rendered)
+
+    typer.echo(f"✅ Created: {output_path}")
