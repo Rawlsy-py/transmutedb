@@ -42,7 +42,7 @@ your_project/
 ### 1. Initialize a New Project
 
 ```bash
-python cli/main.py init my_new_project
+python -m transmute.main init project <my_new_project>
 cd my_new_project
 ```
 
