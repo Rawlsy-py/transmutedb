@@ -1,51 +1,49 @@
-import typer
 from pathlib import Path
-import shutil
+import typer
+from jinja2 import Environment, FileSystemLoader
 
 init_app = typer.Typer()
+
+TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
 @init_app.command("project")
 def init_project(
-    project_name: str = typer.Argument(..., help="Name of the new TransmuteDB project"),
+    name: str = typer.Argument(..., help="Project name"),
+    db: str = typer.Option("postgres", help="Default database backend"),
 ):
-    """Initialize a new TransmuteDB data project."""
-    project_path = Path.cwd() / project_name
-    if project_path.exists():
-        typer.echo(f"❌ Project folder '{project_name}' already exists.")
-        raise typer.Exit(1)
+    """Initialize a new TransmuteDB project."""
+    typer.echo(f"Initializing project: {name}")
 
-    # Folder structure
-    dirs = [
-        project_path / "src" / "flows",
-        project_path / "src" / "tasks",
-        project_path / "src" / "sql",
-        project_path / "src" / "config",
-        project_path / "src" / "tests",
-    ]
-    for d in dirs:
-        d.mkdir(parents=True, exist_ok=True)
+    env = Environment(loader=FileSystemLoader(TEMPLATES_DIR))
 
-    # Sample config file
-    (project_path / "transmute.config.yaml").write_text(
-        "project_name: {}\ndatabase_url: postgres://user:pass@localhost:5432/db\n".format(
-            project_name
-        )
-    )
+    # Create project structure
+    for dir_ in ["src/flows", "src/tasks", "src/config", "src/sql/bronze", "src/tests"]:
+        Path(dir_).mkdir(parents=True, exist_ok=True)
 
-    # Optional: hello world flow
-    hello_flow = """from prefect import flow
+    # Dockerfile
+    dockerfile = env.get_template("Dockerfile.jinja").render(project_name=name)
+    Path("Dockerfile").write_text(dockerfile)
+    typer.echo("✅ Created: Dockerfile")
 
-@flow
-def hello_world_flow():
-    print("👋 Hello from TransmuteDB!")
-
-if __name__ == "__main__":
-    hello_world_flow()
-"""
-    (project_path / "src" / "flows" / "hello_world_flow.py").write_text(hello_flow)
+    # .env
+    env_file = env.get_template("env.jinja").render(db=db)
+    Path(".env").write_text(env_file)
+    typer.echo("✅ Created: .env")
 
     # .gitignore
-    (project_path / ".gitignore").write_text(".env\n.venv\n__pycache__\n*.pyc\n")
+    gitignore = env.get_template("gitignore.jinja").render()
+    Path(".gitignore").write_text(gitignore)
+    typer.echo("✅ Created: .gitignore")
 
-    typer.echo(f"✅ Created new project in: {project_path}")
+    # README.md
+    readme = env.get_template("README.jinja").render(project_name=name)
+    Path("README.md").write_text(readme)
+    typer.echo("✅ Created: README.md")
+
+    # pre-commit config
+    precommit = env.get_template("pre-commit.jinja").render()
+    Path(".pre-commit-config.yaml").write_text(precommit)
+    typer.echo("✅ Created: .pre-commit-config.yaml")
+
+    typer.echo("🎉 Project initialized!")
