@@ -63,7 +63,7 @@ def scaffold_task(
 
 @scaffold_app.command("sql")
 def scaffold_sql(object_name: str = typer.Argument(..., help="Name of the object")):
-    """Scaffold a task file for given object."""
+    """Scaffold a SQL file for given object."""
     typer.echo(f"Scaffolding: {object_name}")
 
     env = Environment(loader=FileSystemLoader(TEMPLATES_DIR))
@@ -73,6 +73,43 @@ def scaffold_sql(object_name: str = typer.Argument(..., help="Name of the object
     output_dir = Path.cwd() / "src" / "sql" / "bronze"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"create_{object_name.lower()}_table.sql"
+    output_path.write_text(rendered)
+
+    typer.echo(f"✅ Created: {output_path}")
+
+
+@scaffold_app.command("config")
+def scaffold_config(
+    object_name: str = typer.Argument(..., help="Name of the object"),
+    source: str = typer.Option("unknown", help="Source of the data (optional)"),
+):
+    """Scaffold a config file for the given object."""
+    typer.echo(f"Scaffolding config for: {object_name}")
+
+    env = Environment(loader=FileSystemLoader(TEMPLATES_DIR))
+    template = env.get_template("config.jinja")
+    rendered = template.render(object_name=object_name.lower(), source=source)
+
+    output_dir = Path.cwd() / "src" / "config"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{object_name.lower()}.yaml"
+    output_path.write_text(rendered)
+
+    typer.echo(f"✅ Created: {output_path}")
+
+
+@scaffold_app.command("test")
+def scaffold_test(object_name: str = typer.Argument(..., help="Name of the object")):
+    """Scaffold a test file for the given object."""
+    typer.echo(f"Scaffolding test for: {object_name}")
+
+    env = Environment(loader=FileSystemLoader(TEMPLATES_DIR))
+    template = env.get_template("test.jinja")
+    rendered = template.render(object_name=object_name.lower())
+
+    output_dir = Path.cwd() / "src" / "tests"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"test_{object_name.lower()}.py"
     output_path.write_text(rendered)
 
     typer.echo(f"✅ Created: {output_path}")
