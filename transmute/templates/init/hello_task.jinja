@@ -1,0 +1,12 @@
+from src.utils.logger import TransmuteLogger
+
+logger = TransmuteLogger(__name__)
+
+def hello_task(name: str) -> str:
+    logger.info(f"Running hello_task with name={name}")
+    if not name:
+        logger.warn("No name provided to hello_task, using 'World' as default.")
+        name = "World"
+    greeting = f"Hello, {name}!"
+    logger.info(f"Greeting generated: {greeting}")
+    return greeting

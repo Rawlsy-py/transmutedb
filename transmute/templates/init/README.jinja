@@ -1,0 +1,53 @@
+# {{ project_name|default("HelloWorld Example Project") }}
+
+Welcome to your TransmuteDB "Hello World"! This project demonstrates the basic structure and usage of a TransmuteDB-generated data project, including flows, tasks, logging, configuration, SQL, and testing.
+
+## Structure
+
+```
+src/
+  flows/
+    hello_flow.py        # Prefect flow
+  tasks/
+    hello_task.py        # Task function
+  utils/
+    logger.py            # Standardized logging utility
+  config/
+    config.py            # Example config
+  sql/
+    bronze/
+      hello.sql          # Example SQL script
+  tests/
+    test_hello.py        # Pytest unit tests
+README.md
+requirements.txt
+```
+
+## Usage
+
+1. **Install dependencies**  
+   (If you haven't already, create a virtual environment and install requirements.)
+
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install prefect
+   ```
+
+2. **Run the flow**
+
+   ```bash
+   python src/flows/hello_flow.py
+   ```
+
+3. **Run the tests**
+
+   ```bash
+   pytest src/tests
+   ```
+
+## What's Next?
+
+- Edit `hello_task.py` to add your own logic.
+- Use the logger throughout your flows and tasks for consistent, formatted output.
+- Add new flows, tasks, configs, and SQL as your pipeline grows!

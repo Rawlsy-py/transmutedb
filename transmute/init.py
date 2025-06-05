@@ -1,49 +1,57 @@
-from pathlib import Path
-import typer
+import os
+import shutil
 from jinja2 import Environment, FileSystemLoader
 
-init_app = typer.Typer()
+TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
 
-TEMPLATES_DIR = Path(__file__).parent / "templates"
+HELLO_WORLD_FILES = [
+    {"template": "logger.jinja",      "dest": "src/utils/logger.py"},
+    {"template": "hello_task.jinja",  "dest": "src/tasks/hello_task.py"},
+    {"template": "hello_flow.jinja",  "dest": "src/flows/hello_flow.py"},
+    {"template": "config.jinja",      "dest": "src/config/config.py"},
+    {"template": "hello.sql.jinja",   "dest": "src/sql/bronze/hello.sql"},
+    {"template": "test_hello.jinja",  "dest": "src/tests/test_hello.py"},
+    {"template": "README.md.jinja",   "dest": "README.md"},
+    # Add more as needed
+]
 
+def create_base_structure(target_dir):
+    dirs = [
+        "src/utils", "src/tasks", "src/flows",
+        "src/config", "src/sql/bronze",
+        "src/tests"
+    ]
+    for d in dirs:
+        os.makedirs(os.path.join(target_dir, d), exist_ok=True)
 
-@init_app.command("project")
-def init_project(
-    name: str = typer.Argument(..., help="Project name"),
-    db: str = typer.Option("postgres", help="Default database backend"),
-):
-    """Initialize a new TransmuteDB project."""
-    typer.echo(f"Initializing project: {name}")
+def render_templates(target_dir, context):
+    env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
+    for file in HELLO_WORLD_FILES:
+        template = env.get_template(file["template"])
+        dest_path = os.path.join(target_dir, file["dest"])
+        with open(dest_path, "w") as f:
+            f.write(template.render(**context))
 
-    env = Environment(loader=FileSystemLoader(TEMPLATES_DIR))
+def copy_requirements(target_dir):
+    # Optionally, provide a starter requirements.txt
+    req_path = os.path.join(TEMPLATE_DIR, "requirements.txt")
+    if os.path.exists(req_path):
+        shutil.copy(req_path, os.path.join(target_dir, "requirements.txt"))
 
-    # Create project structure
-    for dir_ in ["src/flows", "src/tasks", "src/config", "src/sql/bronze", "src/tests"]:
-        Path(dir_).mkdir(parents=True, exist_ok=True)
+def init_project(project_name):
+    target_dir = os.path.abspath(project_name)
+    if os.path.exists(target_dir):
+        raise FileExistsError(f"Directory {target_dir} already exists!")
+    os.makedirs(target_dir)
+    create_base_structure(target_dir)
+    context = {"project_name": project_name}
+    render_templates(target_dir, context)
+    copy_requirements(target_dir)
+    print(f"Project {project_name} initialized at {target_dir}")
 
-    # Dockerfile
-    dockerfile = env.get_template("Dockerfile.jinja").render(project_name=name)
-    Path("Dockerfile").write_text(dockerfile)
-    typer.echo("✅ Created: Dockerfile")
-
-    # .env
-    env_file = env.get_template("env.jinja").render(db=db)
-    Path(".env").write_text(env_file)
-    typer.echo("✅ Created: .env")
-
-    # .gitignore
-    gitignore = env.get_template("gitignore.jinja").render()
-    Path(".gitignore").write_text(gitignore)
-    typer.echo("✅ Created: .gitignore")
-
-    # README.md
-    readme = env.get_template("README.jinja").render(project_name=name)
-    Path("README.md").write_text(readme)
-    typer.echo("✅ Created: README.md")
-
-    # pre-commit config
-    precommit = env.get_template("pre-commit.jinja").render()
-    Path(".pre-commit-config.yaml").write_text(precommit)
-    typer.echo("✅ Created: .pre-commit-config.yaml")
-
-    typer.echo("🎉 Project initialized!")
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) < 2:
+        print("Usage: python -m transmute.init <project_name>")
+        sys.exit(1)
+    init_project(sys.argv[1])
