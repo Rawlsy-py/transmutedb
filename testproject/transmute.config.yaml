@@ -1,2 +1,0 @@
-project_name: testproject
-database_url: postgres://user:pass@localhost:5432/db
