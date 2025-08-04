@@ -1,6 +1,8 @@
 import typer
 
-from transmute import scaffold_app, init_app
+# filepath: transmute/__init__.py
+from transmute.scaffold import scaffold_app
+from transmute.init import init_app
 
 app = typer.Typer()
 app.add_typer(scaffold_app, name="scaffold")
