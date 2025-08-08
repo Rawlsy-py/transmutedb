@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Parameter-driven data engineering framework (Kimball + SCD2) with CLI, Polars/DuckDB by default, Spark optional."
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "Apache-2.0"}
+license = {text = "MIT License"}
 authors = [{ name = "Rawlsy-py", email = "75848374+Rawlsy-py@users.noreply.github.com" }]
 
 dependencies = [
