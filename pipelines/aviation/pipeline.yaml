@@ -1,0 +1,16 @@
+name: aviation
+schedule: "0 * * * *"
+target:
+  kind: duck
+  path: ./aviation.duckdb
+  schema: silver
+sources: []
+models:
+  - name: dim_aircraft
+    layer: silver
+    transform: polars/bronze_to_silver.py.j2
+    scd2:
+      business_key: [aircraft_id]
+      hashdiff_cols: [model, seats]
+    dq_rules:
+      notnull_pk: {type: not_null, cols: [aircraft_id]}
