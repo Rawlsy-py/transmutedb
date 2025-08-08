@@ -756,7 +756,7 @@ wheels = [
 
 [[package]]
 name = "transmutedb"
-version = "0.1.0"
+version = "0.1.1a1"
 source = { virtual = "." }
 dependencies = [
     { name = "duckdb" },

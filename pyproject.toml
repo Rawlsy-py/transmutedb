@@ -1,6 +1,6 @@
 [project]
 name = "transmutedb"
-version = "0.1.0"
+version = "0.1.1a1"
 description = "Parameter-driven data engineering framework (Kimball + SCD2) with CLI, Polars/DuckDB by default, Spark optional."
 readme = "README.md"
 requires-python = ">=3.10"
