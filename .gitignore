@@ -193,7 +193,3 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-# project specific
-# files produced by the cli app
-src/
-testapp/

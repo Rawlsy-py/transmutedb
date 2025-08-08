@@ -1,6 +1,0 @@
-from tasks.{{ object_name }}_transform import transform_{{ object_name }}
-
-def test_transform_{{ object_name }}():
-    sample = [{"id": "001", "payload": {}}]
-    df = transform_{{ object_name }}(sample)
-    assert df.shape[0] == 1
