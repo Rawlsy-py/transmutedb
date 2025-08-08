@@ -64,7 +64,7 @@ your_project/
 
 ---
 
-## 🔧 Quickstart
+## 🔧 Quickstart (Alpha Mode, No PyPi)
 
 ### 1. Install TransmuteDB
 
