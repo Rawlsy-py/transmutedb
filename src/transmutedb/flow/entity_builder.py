@@ -254,7 +254,7 @@ def build_gold_entity(
     
     # Get entity metadata
     entity_meta = con.execute(
-        "SELECT entity_id, target_schema FROM entity_metadata WHERE entity_name = ?",
+        "SELECT entity_id, target_schema, entity_type FROM entity_metadata WHERE entity_name = ?",
         [entity_name]
     ).fetchone()
     
@@ -263,7 +263,12 @@ def build_gold_entity(
     
     entity_id = entity_meta[0]
     target_schema = entity_meta[1] or gold_schema
+    entity_type = entity_meta[2] or "fact"
     _validate_identifier(target_schema, "target schema name")
+    
+    # Check if this is a Type 2 dimension
+    if entity_type == "type2_dimension":
+        return build_type2_dimension(con, entity_name, silver_schema, target_schema)
     
     # Get column metadata
     column_meta = con.execute(
@@ -326,6 +331,7 @@ def build_gold_entity(
     return {
         "entity_name": entity_name,
         "gold_table": gold_table,
+        "entity_type": entity_type,
         "total_rows": stats[0],
         "measures": measure_cols,
         "dimensions": dimension_cols,
@@ -334,11 +340,240 @@ def build_gold_entity(
     }
 
 
+def build_type2_dimension(
+    con: Any,
+    entity_name: str,
+    silver_schema: str = "silver",
+    gold_schema: str = "gold",
+) -> Dict[str, Any]:
+    """
+    Build a Type 2 Slowly Changing Dimension from silver tier data.
+    
+    Type 2 SCD characteristics:
+    - Tracks historical changes to dimension records
+    - Uses business keys to identify unique records
+    - Adds surrogate keys for each version
+    - Tracks valid_from and valid_to dates
+    - Marks current records with is_current flag
+    
+    Args:
+        con: Database connection
+        entity_name: Name of the entity
+        silver_schema: Schema name for silver tier
+        gold_schema: Schema name for gold tier
+    
+    Returns:
+        Dictionary with build results and statistics
+    """
+    # Validate identifiers
+    _validate_identifier(entity_name, "entity name")
+    _validate_identifier(silver_schema, "schema name")
+    _validate_identifier(gold_schema, "schema name")
+    
+    # Get entity metadata
+    entity_meta = con.execute(
+        "SELECT entity_id FROM entity_metadata WHERE entity_name = ?",
+        [entity_name]
+    ).fetchone()
+    
+    if not entity_meta:
+        raise ValueError(f"Entity '{entity_name}' not found in metadata")
+    
+    entity_id = entity_meta[0]
+    
+    # Get column metadata including business keys
+    column_meta = con.execute(
+        """
+        SELECT column_name, data_type, is_business_key, track_history
+        FROM entity_column_metadata
+        WHERE entity_id = ?
+        ORDER BY column_id
+        """,
+        [entity_id]
+    ).fetchall()
+    
+    # Identify business keys and tracked columns
+    business_keys = []
+    tracked_cols = []
+    all_cols = []
+    col_types = {}
+    
+    for col_name, data_type, is_business_key, track_history in column_meta:
+        _validate_identifier(col_name, "column name")
+        all_cols.append(col_name)
+        col_types[col_name] = data_type
+        if is_business_key:
+            business_keys.append(col_name)
+        if track_history:
+            tracked_cols.append(col_name)
+    
+    if not business_keys:
+        raise ValueError(f"Type 2 dimension '{entity_name}' must have at least one business key column")
+    
+    # Create gold schema if it doesn't exist
+    con.execute(f"CREATE SCHEMA IF NOT EXISTS {gold_schema}")
+    
+    gold_table = f"{gold_schema}.{entity_name}"
+    silver_table = f"{silver_schema}.{entity_name}_silver"
+    
+    # Check if dimension table exists
+    table_exists = con.execute(f"""
+        SELECT COUNT(*) FROM information_schema.tables 
+        WHERE table_schema = '{gold_schema}' AND table_name = '{entity_name}'
+    """).fetchone()[0] > 0
+    
+    if not table_exists:
+        # Initial load - create table with SCD2 columns
+        all_cols_str = ", ".join([f"{col} {col_types[col]}" for col in all_cols])
+        
+        create_sql = f"""
+            CREATE TABLE {gold_table} (
+                {entity_name}_key INTEGER PRIMARY KEY,
+                {all_cols_str},
+                _valid_from TIMESTAMP NOT NULL,
+                _valid_to TIMESTAMP,
+                _is_current BOOLEAN NOT NULL DEFAULT TRUE,
+                _load_date TIMESTAMP NOT NULL,
+                _row_hash VARCHAR
+            )
+        """
+        con.execute(create_sql)
+        
+        # Create sequence for surrogate keys
+        con.execute(f"CREATE SEQUENCE IF NOT EXISTS {entity_name}_key_seq START 1")
+        
+        # Insert initial records from silver
+        business_key_str = ", ".join(business_keys)
+        all_cols_str = ", ".join(all_cols)
+        
+        insert_sql = f"""
+            INSERT INTO {gold_table}
+            SELECT 
+                nextval('{entity_name}_key_seq') as {entity_name}_key,
+                {all_cols_str},
+                _valid_from,
+                NULL as _valid_to,
+                TRUE as _is_current,
+                _load_date,
+                _row_hash
+            FROM {silver_table}
+            WHERE _is_valid = TRUE
+        """
+        con.execute(insert_sql)
+        
+        rows_inserted = con.execute(f"SELECT COUNT(*) FROM {gold_table}").fetchone()[0]
+        
+        return {
+            "entity_name": entity_name,
+            "gold_table": gold_table,
+            "entity_type": "type2_dimension",
+            "total_rows": rows_inserted,
+            "new_rows": rows_inserted,
+            "updated_rows": 0,
+            "business_keys": business_keys,
+            "tracked_columns": tracked_cols,
+        }
+    else:
+        # Incremental load - apply SCD2 logic
+        business_key_join = " AND ".join([f"dim.{k} = src.{k}" for k in business_keys])
+        all_cols_str = ", ".join(all_cols)
+        
+        # Count records that will be closed (have changed)
+        updated_rows = con.execute(f"""
+            SELECT COUNT(*)
+            FROM {gold_table} dim
+            JOIN {silver_table} src ON {business_key_join}
+            WHERE dim._is_current = TRUE
+                AND dim._row_hash != src._row_hash
+                AND src._is_valid = TRUE
+        """).fetchone()[0]
+        
+        # Close records that have changed
+        con.execute(f"""
+            UPDATE {gold_table} dim
+            SET _valid_to = CURRENT_TIMESTAMP,
+                _is_current = FALSE
+            FROM {silver_table} src
+            WHERE {business_key_join}
+                AND dim._is_current = TRUE
+                AND dim._row_hash != src._row_hash
+                AND src._is_valid = TRUE
+        """)
+        
+        # Insert new versions of changed records
+        con.execute(f"""
+            INSERT INTO {gold_table}
+            SELECT 
+                nextval('{entity_name}_key_seq') as {entity_name}_key,
+                src.{all_cols_str.replace(', ', ', src.')},
+                src._valid_from,
+                NULL as _valid_to,
+                TRUE as _is_current,
+                src._load_date,
+                src._row_hash
+            FROM {silver_table} src
+            WHERE src._is_valid = TRUE
+                AND EXISTS (
+                    SELECT 1 FROM {gold_table} dim
+                    WHERE {business_key_join}
+                        AND dim._valid_to IS NOT NULL
+                        AND dim._is_current = FALSE
+                )
+        """)
+        
+        changed_rows = updated_rows  # Same as updated_rows
+        
+        # Insert completely new records (business keys not in dimension)
+        con.execute(f"""
+            INSERT INTO {gold_table}
+            SELECT 
+                nextval('{entity_name}_key_seq') as {entity_name}_key,
+                src.{all_cols_str.replace(', ', ', src.')},
+                src._valid_from,
+                NULL as _valid_to,
+                TRUE as _is_current,
+                src._load_date,
+                src._row_hash
+            FROM {silver_table} src
+            WHERE src._is_valid = TRUE
+                AND NOT EXISTS (
+                    SELECT 1 FROM {gold_table} dim
+                    WHERE {business_key_join}
+                )
+        """)
+        
+        # Count new records
+        new_rows = con.execute(f"""
+            SELECT COUNT(*)
+            FROM {silver_table} src
+            WHERE src._is_valid = TRUE
+                AND NOT EXISTS (
+                    SELECT 1 FROM {gold_table} dim
+                    WHERE {business_key_join}
+                )
+        """).fetchone()[0]
+        
+        total_rows = con.execute(f"SELECT COUNT(*) FROM {gold_table}").fetchone()[0]
+        
+        return {
+            "entity_name": entity_name,
+            "gold_table": gold_table,
+            "entity_type": "type2_dimension",
+            "total_rows": total_rows,
+            "new_rows": new_rows,
+            "updated_rows": updated_rows,
+            "changed_rows": changed_rows,
+            "business_keys": business_keys,
+            "tracked_columns": tracked_cols,
+        }
+
+
 def update_entity_metadata(
     con: Any,
     entity_name: str,
     source_table: Optional[str] = None,
     target_schema: str = "gold",
+    entity_type: str = "fact",
     description: Optional[str] = None,
 ) -> int:
     """
@@ -349,6 +584,7 @@ def update_entity_metadata(
         entity_name: Name of the entity
         source_table: Source table/query for the entity
         target_schema: Target schema for gold tier
+        entity_type: Type of entity - 'fact', 'dimension', or 'type2_dimension'
         description: Description of the entity
     
     Returns:
@@ -367,27 +603,29 @@ def update_entity_metadata(
             UPDATE entity_metadata 
             SET source_table = ?,
                 target_schema = ?,
+                entity_type = ?,
                 description = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE entity_name = ?
             """,
-            [source_table or '', target_schema, description or '', entity_name]
+            [source_table or '', target_schema, entity_type, description or '', entity_name]
         )
         return existing[0]
     else:
         # Insert new
         con.execute(
             """
-            INSERT INTO entity_metadata (entity_id, entity_name, source_table, target_schema, description)
+            INSERT INTO entity_metadata (entity_id, entity_name, source_table, target_schema, entity_type, description)
             VALUES (
                 nextval('entity_metadata_seq'),
+                ?,
                 ?,
                 ?,
                 ?,
                 ?
             )
             """,
-            [entity_name, source_table or '', target_schema, description or '']
+            [entity_name, source_table or '', target_schema, entity_type, description or '']
         )
         result = con.execute("SELECT currval('entity_metadata_seq')").fetchone()
         return result[0]
@@ -401,6 +639,8 @@ def add_entity_column(
     is_nullable: bool = True,
     is_measure: bool = False,
     is_dimension: bool = False,
+    is_business_key: bool = False,
+    track_history: bool = False,
     default_value: Optional[str] = None,
     description: Optional[str] = None,
     dq_rule_type: Optional[str] = None,
@@ -417,6 +657,8 @@ def add_entity_column(
         is_nullable: Whether the column allows NULL values
         is_measure: Whether this is a measure column (numeric aggregatable)
         is_dimension: Whether this is a dimension column (grouping/filtering)
+        is_business_key: Whether this is a business key for Type 2 dimension tracking
+        track_history: Whether to track history for this column in Type 2 dimensions
         default_value: Default value for the column
         description: Description of the column
         dq_rule_type: Type of data quality rule (e.g., 'range', 'pattern', 'lookup')
@@ -441,11 +683,14 @@ def add_entity_column(
         """
         INSERT INTO entity_column_metadata (
             column_id, entity_id, column_name, data_type, is_nullable,
-            is_measure, is_dimension, default_value, description,
+            is_measure, is_dimension, is_business_key, track_history,
+            default_value, description,
             dq_rule_type, dq_rule_params
         )
         VALUES (
             nextval('entity_column_metadata_seq'),
+            ?,
+            ?,
             ?,
             ?,
             ?,
@@ -465,6 +710,8 @@ def add_entity_column(
             is_nullable,
             is_measure,
             is_dimension,
+            is_business_key,
+            track_history,
             default_value,
             description,
             dq_rule_type,
