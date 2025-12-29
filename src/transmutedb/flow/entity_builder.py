@@ -488,6 +488,17 @@ def build_type2_dimension(
                 AND src._is_valid = TRUE
         """).fetchone()[0]
         
+        # Count new records BEFORE insert
+        new_rows = con.execute(f"""
+            SELECT COUNT(*)
+            FROM {silver_table} src
+            WHERE src._is_valid = TRUE
+                AND NOT EXISTS (
+                    SELECT 1 FROM {gold_table} dim
+                    WHERE {business_key_join}
+                )
+        """).fetchone()[0]
+        
         # Close records that have changed
         con.execute(f"""
             UPDATE {gold_table} dim
@@ -500,7 +511,7 @@ def build_type2_dimension(
                 AND src._is_valid = TRUE
         """)
         
-        # Insert new versions of changed records
+        # Insert new versions of changed records (match on business key + different hash)
         con.execute(f"""
             INSERT INTO {gold_table}
             SELECT 
@@ -516,8 +527,12 @@ def build_type2_dimension(
                 AND EXISTS (
                     SELECT 1 FROM {gold_table} dim
                     WHERE {business_key_join}
-                        AND dim._valid_to IS NOT NULL
-                        AND dim._is_current = FALSE
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM {gold_table} dim
+                    WHERE {business_key_join}
+                        AND dim._row_hash = src._row_hash
+                        AND dim._is_current = TRUE
                 )
         """)
         
@@ -541,17 +556,6 @@ def build_type2_dimension(
                     WHERE {business_key_join}
                 )
         """)
-        
-        # Count new records
-        new_rows = con.execute(f"""
-            SELECT COUNT(*)
-            FROM {silver_table} src
-            WHERE src._is_valid = TRUE
-                AND NOT EXISTS (
-                    SELECT 1 FROM {gold_table} dim
-                    WHERE {business_key_join}
-                )
-        """).fetchone()[0]
         
         total_rows = con.execute(f"SELECT COUNT(*) FROM {gold_table}").fetchone()[0]
         
