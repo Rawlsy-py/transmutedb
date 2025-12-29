@@ -1,0 +1,400 @@
+"""Fact table builder for metadata-driven fact tables across bronze, silver, and gold tiers."""
+from __future__ import annotations
+
+import hashlib
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+import polars as pl
+
+
+def load_bronze_fact(
+    con: Any,
+    fact_name: str,
+    source_data: pl.DataFrame,
+    bronze_schema: str = "bronze",
+) -> pl.DataFrame:
+    """
+    Load data into bronze tier with auto-generated metadata columns.
+    
+    Bronze tier characteristics:
+    - No schema or data typing enforcement
+    - Auto-generates hash column for tracking changes
+    - Auto-generates load_date for audit trail
+    - Just validates that data exists
+    
+    Args:
+        con: Database connection
+        fact_name: Name of the fact table
+        source_data: Source dataframe to load
+        bronze_schema: Schema name for bronze tier (default: 'bronze')
+    
+    Returns:
+        DataFrame with metadata columns added
+    """
+    # Add metadata columns
+    df = source_data.clone()
+    
+    # Add load_date timestamp
+    df = df.with_columns([
+        pl.lit(datetime.now()).alias("_load_date")
+    ])
+    
+    # Calculate row hash for change detection
+    # Concatenate all columns (except metadata) and hash
+    original_columns = [col for col in source_data.columns]
+    df = df.with_columns([
+        pl.concat_str(original_columns, separator="|").map_elements(
+            lambda x: hashlib.md5(x.encode()).hexdigest(),
+            return_dtype=pl.Utf8
+        ).alias("_row_hash")
+    ])
+    
+    # Create bronze schema if it doesn't exist
+    con.execute(f"CREATE SCHEMA IF NOT EXISTS {bronze_schema}")
+    
+    # Create or replace bronze table using register and CTAS
+    table_name = f"{bronze_schema}.{fact_name}_bronze"
+    
+    # Register the polars dataframe as a DuckDB view temporarily
+    con.register("_temp_bronze_df", df)
+    
+    # Create table from the registered dataframe
+    con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM _temp_bronze_df")
+    
+    # Unregister the temporary view
+    con.unregister("_temp_bronze_df")
+    
+    return df
+
+
+def apply_silver_rules(
+    con: Any,
+    fact_name: str,
+    bronze_schema: str = "bronze",
+    silver_schema: str = "silver",
+) -> Dict[str, Any]:
+    """
+    Apply schema and data type rules from metadata to create silver tier table.
+    
+    Silver tier characteristics:
+    - Declares schema and data types from metadata
+    - Applies data quality rules from metadata
+    - Validates nullability constraints
+    - Tracks validation results
+    
+    Args:
+        con: Database connection
+        fact_name: Name of the fact table
+        bronze_schema: Schema name for bronze tier
+        silver_schema: Schema name for silver tier
+    
+    Returns:
+        Dictionary with validation results and statistics
+    """
+    # Get fact metadata
+    fact_meta = con.execute(f"""
+        SELECT fact_id, source_table 
+        FROM fact_metadata 
+        WHERE fact_name = '{fact_name}'
+    """).fetchone()
+    
+    if not fact_meta:
+        raise ValueError(f"Fact table '{fact_name}' not found in metadata")
+    
+    fact_id = fact_meta[0]
+    
+    # Get column metadata with type and validation rules
+    column_meta = con.execute(f"""
+        SELECT column_name, data_type, is_nullable, dq_rule_type, dq_rule_params
+        FROM fact_column_metadata
+        WHERE fact_id = {fact_id}
+        ORDER BY column_id
+    """).fetchall()
+    
+    if not column_meta:
+        raise ValueError(f"No column metadata found for fact '{fact_name}'")
+    
+    # Create silver schema if it doesn't exist
+    con.execute(f"CREATE SCHEMA IF NOT EXISTS {silver_schema}")
+    
+    # Build column definitions for CREATE TABLE
+    column_defs = []
+    for col_name, data_type, is_nullable, dq_rule_type, dq_rule_params in column_meta:
+        null_constraint = "NULL" if is_nullable else "NOT NULL"
+        column_defs.append(f"{col_name} {data_type} {null_constraint}")
+    
+    # Add metadata columns
+    column_defs.append("_load_date TIMESTAMP NOT NULL")
+    column_defs.append("_row_hash VARCHAR")
+    column_defs.append("_valid_from TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+    column_defs.append("_is_valid BOOLEAN DEFAULT TRUE")
+    
+    # Create silver table with proper schema
+    silver_table = f"{silver_schema}.{fact_name}_silver"
+    bronze_table = f"{bronze_schema}.{fact_name}_bronze"
+    
+    create_sql = f"""
+        CREATE OR REPLACE TABLE {silver_table} (
+            {', '.join(column_defs)}
+        )
+    """
+    con.execute(create_sql)
+    
+    # Insert data with type casting and validation
+    column_names = [col[0] for col in column_meta]
+    select_columns = []
+    
+    for col_name, data_type, is_nullable, dq_rule_type, dq_rule_params in column_meta:
+        # Cast to appropriate type
+        select_columns.append(f"TRY_CAST({col_name} AS {data_type}) AS {col_name}")
+    
+    insert_sql = f"""
+        INSERT INTO {silver_table}
+        SELECT 
+            {', '.join(select_columns)},
+            _load_date,
+            _row_hash,
+            CURRENT_TIMESTAMP AS _valid_from,
+            TRUE AS _is_valid
+        FROM {bronze_table}
+    """
+    con.execute(insert_sql)
+    
+    # Gather statistics
+    stats = con.execute(f"""
+        SELECT 
+            COUNT(*) as total_rows,
+            COUNT(CASE WHEN _is_valid = TRUE THEN 1 END) as valid_rows,
+            COUNT(CASE WHEN _is_valid = FALSE THEN 1 END) as invalid_rows
+        FROM {silver_table}
+    """).fetchone()
+    
+    return {
+        "fact_name": fact_name,
+        "silver_table": silver_table,
+        "total_rows": stats[0],
+        "valid_rows": stats[1],
+        "invalid_rows": stats[2],
+    }
+
+
+def build_gold_fact(
+    con: Any,
+    fact_name: str,
+    silver_schema: str = "silver",
+    gold_schema: str = "gold",
+) -> Dict[str, Any]:
+    """
+    Build the final gold tier fact table from validated silver tier data.
+    
+    Gold tier characteristics:
+    - Contains only validated, typed data from silver tier
+    - Separates measures from dimensions
+    - Applies final business rules
+    - Ready for analytics and reporting
+    
+    Args:
+        con: Database connection
+        fact_name: Name of the fact table
+        silver_schema: Schema name for silver tier
+        gold_schema: Schema name for gold tier
+    
+    Returns:
+        Dictionary with build results and statistics
+    """
+    # Get fact metadata
+    fact_meta = con.execute(f"""
+        SELECT fact_id, target_schema 
+        FROM fact_metadata 
+        WHERE fact_name = '{fact_name}'
+    """).fetchone()
+    
+    if not fact_meta:
+        raise ValueError(f"Fact table '{fact_name}' not found in metadata")
+    
+    fact_id = fact_meta[0]
+    target_schema = fact_meta[1] or gold_schema
+    
+    # Get column metadata
+    column_meta = con.execute(f"""
+        SELECT column_name, data_type, is_measure, is_dimension
+        FROM fact_column_metadata
+        WHERE fact_id = {fact_id}
+        ORDER BY column_id
+    """).fetchall()
+    
+    # Create gold schema if it doesn't exist
+    con.execute(f"CREATE SCHEMA IF NOT EXISTS {target_schema}")
+    
+    # Separate measures and dimensions but preserve order
+    measure_cols = []
+    dimension_cols = []
+    other_cols = []
+    all_cols_ordered = []
+    
+    for col_name, data_type, is_measure, is_dimension in column_meta:
+        all_cols_ordered.append(col_name)
+        if is_measure:
+            measure_cols.append(col_name)
+        elif is_dimension:
+            dimension_cols.append(col_name)
+        else:
+            other_cols.append(col_name)
+    
+    # Build gold table from valid silver records
+    gold_table = f"{target_schema}.{fact_name}"
+    silver_table = f"{silver_schema}.{fact_name}_silver"
+    
+    # Use original metadata order for SELECT
+    select_list = ", ".join(all_cols_ordered)
+    
+    create_sql = f"""
+        CREATE OR REPLACE TABLE {gold_table} AS
+        SELECT 
+            {select_list},
+            _load_date,
+            _valid_from
+        FROM {silver_table}
+        WHERE _is_valid = TRUE
+    """
+    con.execute(create_sql)
+    
+    # Gather statistics
+    stats = con.execute(f"""
+        SELECT 
+            COUNT(*) as total_rows,
+            MIN(_valid_from) as earliest_record,
+            MAX(_valid_from) as latest_record
+        FROM {gold_table}
+    """).fetchone()
+    
+    return {
+        "fact_name": fact_name,
+        "gold_table": gold_table,
+        "total_rows": stats[0],
+        "measures": measure_cols,
+        "dimensions": dimension_cols,
+        "earliest_record": stats[1],
+        "latest_record": stats[2],
+    }
+
+
+def update_fact_metadata(
+    con: Any,
+    fact_name: str,
+    source_table: Optional[str] = None,
+    target_schema: str = "gold",
+    description: Optional[str] = None,
+) -> int:
+    """
+    Create or update fact table metadata.
+    
+    Args:
+        con: Database connection
+        fact_name: Name of the fact table
+        source_table: Source table/query for the fact
+        target_schema: Target schema for gold tier
+        description: Description of the fact table
+    
+    Returns:
+        fact_id of the created/updated record
+    """
+    # Check if fact already exists
+    existing = con.execute(f"""
+        SELECT fact_id FROM fact_metadata WHERE fact_name = '{fact_name}'
+    """).fetchone()
+    
+    if existing:
+        # Update existing
+        con.execute(f"""
+            UPDATE fact_metadata 
+            SET source_table = '{source_table or ''}',
+                target_schema = '{target_schema}',
+                description = '{description or ''}',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE fact_name = '{fact_name}'
+        """)
+        return existing[0]
+    else:
+        # Insert new
+        con.execute(f"""
+            INSERT INTO fact_metadata (fact_id, fact_name, source_table, target_schema, description)
+            VALUES (
+                nextval('fact_metadata_seq'),
+                '{fact_name}',
+                '{source_table or ''}',
+                '{target_schema}',
+                '{description or ''}'
+            )
+        """)
+        result = con.execute("SELECT currval('fact_metadata_seq')").fetchone()
+        return result[0]
+
+
+def add_fact_column(
+    con: Any,
+    fact_name: str,
+    column_name: str,
+    data_type: str,
+    is_nullable: bool = True,
+    is_measure: bool = False,
+    is_dimension: bool = False,
+    default_value: Optional[str] = None,
+    description: Optional[str] = None,
+    dq_rule_type: Optional[str] = None,
+    dq_rule_params: Optional[str] = None,
+) -> int:
+    """
+    Add a column definition to fact table metadata.
+    
+    Args:
+        con: Database connection
+        fact_name: Name of the fact table
+        column_name: Name of the column
+        data_type: SQL data type (e.g., 'INTEGER', 'VARCHAR', 'DECIMAL(10,2)')
+        is_nullable: Whether the column allows NULL values
+        is_measure: Whether this is a measure column (numeric aggregatable)
+        is_dimension: Whether this is a dimension column (grouping/filtering)
+        default_value: Default value for the column
+        description: Description of the column
+        dq_rule_type: Type of data quality rule (e.g., 'range', 'pattern', 'lookup')
+        dq_rule_params: Parameters for the DQ rule in JSON format
+    
+    Returns:
+        column_id of the created record
+    """
+    # Get fact_id
+    fact = con.execute(f"""
+        SELECT fact_id FROM fact_metadata WHERE fact_name = '{fact_name}'
+    """).fetchone()
+    
+    if not fact:
+        raise ValueError(f"Fact table '{fact_name}' not found in metadata")
+    
+    fact_id = fact[0]
+    
+    # Insert column metadata
+    con.execute(f"""
+        INSERT INTO fact_column_metadata (
+            column_id, fact_id, column_name, data_type, is_nullable,
+            is_measure, is_dimension, default_value, description,
+            dq_rule_type, dq_rule_params
+        )
+        VALUES (
+            nextval('fact_column_metadata_seq'),
+            {fact_id},
+            '{column_name}',
+            '{data_type}',
+            {is_nullable},
+            {is_measure},
+            {is_dimension},
+            {f"'{default_value}'" if default_value else 'NULL'},
+            {f"'{description}'" if description else 'NULL'},
+            {f"'{dq_rule_type}'" if dq_rule_type else 'NULL'},
+            {f"'{dq_rule_params}'" if dq_rule_params else 'NULL'}
+        )
+    """)
+    
+    result = con.execute("SELECT currval('fact_column_metadata_seq')").fetchone()
+    return result[0]
