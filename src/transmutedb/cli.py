@@ -12,7 +12,6 @@ from transmutedb.scaffold.generate import (
     init_project,
     make_entity_wizard,
     make_activity_wizard,
-    make_fact_wizard,
 )
 
 # Config loader & validators
@@ -108,62 +107,6 @@ def make_activity(
 ):
     make_activity_wizard(pipeline)
     typer.echo(f"✅ activity added to pipeline '{pipeline}'")
-
-
-@make_app.command(
-    "fact",
-    help="Scaffold a metadata-driven fact table with bronze, silver, and gold tiers.",
-)
-def make_fact(
-    fact_name: str = typer.Argument(
-        ..., help="Name of the fact table to create (e.g., 'sales_transactions')"
-    ),
-    tier: str = typer.Option(
-        "all",
-        "--tier",
-        help="Tier(s) to scaffold: 'bronze', 'silver', 'gold', or 'all'",
-    ),
-    defaults: bool = typer.Option(
-        False, "--defaults", help="Accept sensible defaults without prompts."
-    ),
-    project_dir: Path = typer.Option(
-        Path("."), "--project-dir", help="Project root directory."
-    ),
-):
-    """
-    Scaffold a new fact table with metadata-driven configuration.
-    
-    This command creates:
-    - Metadata entries in fact_metadata and fact_column_metadata tables
-    - Sample data loading scripts for the specified tier(s)
-    - Documentation explaining the fact table structure
-    
-    The fact table follows the medallion architecture:
-    - Bronze: Raw data landing with auto-generated metadata columns
-    - Silver: Schema validation and data quality rules from metadata
-    - Gold: Analytics-ready fact table with measures and dimensions
-    """
-    try:
-        make_fact_wizard(
-            fact_name=fact_name,
-            tier=tier,
-            project_dir=project_dir,
-            use_defaults=defaults,
-        )
-        typer.echo(f"✅ Fact table '{fact_name}' scaffolded successfully")
-        typer.echo(f"   - Metadata entries created in fact_metadata table")
-        typer.echo(f"   - Scripts generated in scripts/facts/")
-        typer.echo(f"   - Documentation created in docs/facts/{fact_name}.md")
-        typer.echo(f"\n📖 Next steps:")
-        typer.echo(f"   1. Review and customize metadata in fact_column_metadata table")
-        typer.echo(f"   2. Update data loading logic in scripts/facts/{fact_name}_bronze_load.py")
-        typer.echo(f"   3. Run the scripts in sequence: bronze → silver → gold")
-    except FileNotFoundError as e:
-        typer.echo(f"❌ Error: {e}")
-        raise typer.Exit(code=1)
-    except Exception as e:
-        typer.echo(f"❌ Failed to scaffold fact table: {e}")
-        raise typer.Exit(code=1)
 
 
 # --------------------------- CONFIG ----------------------------------------

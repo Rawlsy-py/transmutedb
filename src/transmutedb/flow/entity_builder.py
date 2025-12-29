@@ -1,4 +1,4 @@
-"""Fact table builder for metadata-driven fact tables across bronze, silver, and gold tiers."""
+"""Entity builder for metadata-driven entities across bronze, silver, and gold tiers."""
 from __future__ import annotations
 
 import hashlib
@@ -34,9 +34,9 @@ def _validate_identifier(identifier: str, identifier_type: str = "identifier") -
     return identifier
 
 
-def load_bronze_fact(
+def load_bronze_entity(
     con: Any,
-    fact_name: str,
+    entity_name: str,
     source_data: pl.DataFrame,
     bronze_schema: str = "bronze",
 ) -> pl.DataFrame:
@@ -51,7 +51,7 @@ def load_bronze_fact(
     
     Args:
         con: Database connection
-        fact_name: Name of the fact table
+        entity_name: Name of the entity
         source_data: Source dataframe to load
         bronze_schema: Schema name for bronze tier (default: 'bronze')
     
@@ -78,14 +78,14 @@ def load_bronze_fact(
     ])
     
     # Validate identifiers
-    _validate_identifier(fact_name, "fact name")
+    _validate_identifier(entity_name, "fact name")
     _validate_identifier(bronze_schema, "schema name")
     
     # Create bronze schema if it doesn't exist
     con.execute(f"CREATE SCHEMA IF NOT EXISTS {bronze_schema}")
     
     # Create or replace bronze table using register and CTAS
-    table_name = f"{bronze_schema}.{_validate_identifier(fact_name, 'fact name')}_bronze"
+    table_name = f"{bronze_schema}.{_validate_identifier(entity_name, 'fact name')}_bronze"
     
     # Register the polars dataframe as a DuckDB view temporarily
     con.register("_temp_bronze_df", df)
@@ -99,9 +99,9 @@ def load_bronze_fact(
     return df
 
 
-def apply_silver_rules(
+def process_silver_entity(
     con: Any,
-    fact_name: str,
+    entity_name: str,
     bronze_schema: str = "bronze",
     silver_schema: str = "silver",
 ) -> Dict[str, Any]:
@@ -116,7 +116,7 @@ def apply_silver_rules(
     
     Args:
         con: Database connection
-        fact_name: Name of the fact table
+        entity_name: Name of the entity
         bronze_schema: Schema name for bronze tier
         silver_schema: Schema name for silver tier
     
@@ -124,34 +124,34 @@ def apply_silver_rules(
         Dictionary with validation results and statistics
     """
     # Validate identifiers
-    _validate_identifier(fact_name, "fact name")
+    _validate_identifier(entity_name, "fact name")
     _validate_identifier(bronze_schema, "schema name")
     _validate_identifier(silver_schema, "schema name")
     
     # Get fact metadata
     fact_meta = con.execute(
-        "SELECT fact_id, source_table FROM fact_metadata WHERE fact_name = ?",
-        [fact_name]
+        "SELECT entity_id, source_table FROM entity_metadata WHERE entity_name = ?",
+        [entity_name]
     ).fetchone()
     
     if not fact_meta:
-        raise ValueError(f"Fact table '{fact_name}' not found in metadata")
+        raise ValueError(f"Entity '{entity_name}' not found in metadata")
     
-    fact_id = fact_meta[0]
+    entity_id = fact_meta[0]
     
     # Get column metadata with type and validation rules
     column_meta = con.execute(
         """
         SELECT column_name, data_type, is_nullable, dq_rule_type, dq_rule_params
-        FROM fact_column_metadata
-        WHERE fact_id = ?
+        FROM entity_column_metadata
+        WHERE entity_id = ?
         ORDER BY column_id
         """,
-        [fact_id]
+        [entity_id]
     ).fetchall()
     
     if not column_meta:
-        raise ValueError(f"No column metadata found for fact '{fact_name}'")
+        raise ValueError(f"No column metadata found for fact '{entity_name}'")
     
     # Create silver schema if it doesn't exist
     con.execute(f"CREATE SCHEMA IF NOT EXISTS {silver_schema}")
@@ -175,8 +175,8 @@ def apply_silver_rules(
     column_defs.append("_is_valid BOOLEAN DEFAULT TRUE")
     
     # Create silver table with proper schema
-    silver_table = f"{silver_schema}.{fact_name}_silver"
-    bronze_table = f"{bronze_schema}.{fact_name}_bronze"
+    silver_table = f"{silver_schema}.{entity_name}_silver"
+    bronze_table = f"{bronze_schema}.{entity_name}_bronze"
     
     create_sql = f"""
         CREATE OR REPLACE TABLE {silver_table} (
@@ -215,7 +215,7 @@ def apply_silver_rules(
     """).fetchone()
     
     return {
-        "fact_name": fact_name,
+        "entity_name": entity_name,
         "silver_table": silver_table,
         "total_rows": stats[0],
         "valid_rows": stats[1],
@@ -223,14 +223,14 @@ def apply_silver_rules(
     }
 
 
-def build_gold_fact(
+def build_gold_entity(
     con: Any,
-    fact_name: str,
+    entity_name: str,
     silver_schema: str = "silver",
     gold_schema: str = "gold",
 ) -> Dict[str, Any]:
     """
-    Build the final gold tier fact table from validated silver tier data.
+    Build the final gold tier entity from validated silver tier data.
     
     Gold tier characteristics:
     - Contains only validated, typed data from silver tier
@@ -240,7 +240,7 @@ def build_gold_fact(
     
     Args:
         con: Database connection
-        fact_name: Name of the fact table
+        entity_name: Name of the entity
         silver_schema: Schema name for silver tier
         gold_schema: Schema name for gold tier
     
@@ -248,20 +248,20 @@ def build_gold_fact(
         Dictionary with build results and statistics
     """
     # Validate identifiers
-    _validate_identifier(fact_name, "fact name")
+    _validate_identifier(entity_name, "fact name")
     _validate_identifier(silver_schema, "schema name")
     _validate_identifier(gold_schema, "schema name")
     
     # Get fact metadata
     fact_meta = con.execute(
-        "SELECT fact_id, target_schema FROM fact_metadata WHERE fact_name = ?",
-        [fact_name]
+        "SELECT entity_id, target_schema FROM entity_metadata WHERE entity_name = ?",
+        [entity_name]
     ).fetchone()
     
     if not fact_meta:
-        raise ValueError(f"Fact table '{fact_name}' not found in metadata")
+        raise ValueError(f"Entity '{entity_name}' not found in metadata")
     
-    fact_id = fact_meta[0]
+    entity_id = fact_meta[0]
     target_schema = fact_meta[1] or gold_schema
     _validate_identifier(target_schema, "target schema name")
     
@@ -269,11 +269,11 @@ def build_gold_fact(
     column_meta = con.execute(
         """
         SELECT column_name, data_type, is_measure, is_dimension
-        FROM fact_column_metadata
-        WHERE fact_id = ?
+        FROM entity_column_metadata
+        WHERE entity_id = ?
         ORDER BY column_id
         """,
-        [fact_id]
+        [entity_id]
     ).fetchall()
     
     # Create gold schema if it doesn't exist
@@ -297,8 +297,8 @@ def build_gold_fact(
             other_cols.append(col_name)
     
     # Build gold table from valid silver records
-    gold_table = f"{target_schema}.{fact_name}"
-    silver_table = f"{silver_schema}.{fact_name}_silver"
+    gold_table = f"{target_schema}.{entity_name}"
+    silver_table = f"{silver_schema}.{entity_name}_silver"
     
     # Use original metadata order for SELECT
     select_list = ", ".join(all_cols_ordered)
@@ -324,7 +324,7 @@ def build_gold_fact(
     """).fetchone()
     
     return {
-        "fact_name": fact_name,
+        "entity_name": entity_name,
         "gold_table": gold_table,
         "total_rows": stats[0],
         "measures": measure_cols,
@@ -334,68 +334,68 @@ def build_gold_fact(
     }
 
 
-def update_fact_metadata(
+def update_entity_metadata(
     con: Any,
-    fact_name: str,
+    entity_name: str,
     source_table: Optional[str] = None,
     target_schema: str = "gold",
     description: Optional[str] = None,
 ) -> int:
     """
-    Create or update fact table metadata.
+    Create or update entity metadata.
     
     Args:
         con: Database connection
-        fact_name: Name of the fact table
+        entity_name: Name of the entity
         source_table: Source table/query for the fact
         target_schema: Target schema for gold tier
-        description: Description of the fact table
+        description: Description of the entity
     
     Returns:
-        fact_id of the created/updated record
+        entity_id of the created/updated record
     """
     # Check if fact already exists
     existing = con.execute(
-        "SELECT fact_id FROM fact_metadata WHERE fact_name = ?",
-        [fact_name]
+        "SELECT entity_id FROM entity_metadata WHERE entity_name = ?",
+        [entity_name]
     ).fetchone()
     
     if existing:
         # Update existing
         con.execute(
             """
-            UPDATE fact_metadata 
+            UPDATE entity_metadata 
             SET source_table = ?,
                 target_schema = ?,
                 description = ?,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE fact_name = ?
+            WHERE entity_name = ?
             """,
-            [source_table or '', target_schema, description or '', fact_name]
+            [source_table or '', target_schema, description or '', entity_name]
         )
         return existing[0]
     else:
         # Insert new
         con.execute(
             """
-            INSERT INTO fact_metadata (fact_id, fact_name, source_table, target_schema, description)
+            INSERT INTO entity_metadata (entity_id, entity_name, source_table, target_schema, description)
             VALUES (
-                nextval('fact_metadata_seq'),
+                nextval('entity_metadata_seq'),
                 ?,
                 ?,
                 ?,
                 ?
             )
             """,
-            [fact_name, source_table or '', target_schema, description or '']
+            [entity_name, source_table or '', target_schema, description or '']
         )
-        result = con.execute("SELECT currval('fact_metadata_seq')").fetchone()
+        result = con.execute("SELECT currval('entity_metadata_seq')").fetchone()
         return result[0]
 
 
-def add_fact_column(
+def add_entity_column(
     con: Any,
-    fact_name: str,
+    entity_name: str,
     column_name: str,
     data_type: str,
     is_nullable: bool = True,
@@ -407,11 +407,11 @@ def add_fact_column(
     dq_rule_params: Optional[str] = None,
 ) -> int:
     """
-    Add a column definition to fact table metadata.
+    Add a column definition to entity metadata.
     
     Args:
         con: Database connection
-        fact_name: Name of the fact table
+        entity_name: Name of the entity
         column_name: Name of the column
         data_type: SQL data type (e.g., 'INTEGER', 'VARCHAR', 'DECIMAL(10,2)')
         is_nullable: Whether the column allows NULL values
@@ -425,27 +425,27 @@ def add_fact_column(
     Returns:
         column_id of the created record
     """
-    # Get fact_id
+    # Get entity_id
     fact = con.execute(
-        "SELECT fact_id FROM fact_metadata WHERE fact_name = ?",
-        [fact_name]
+        "SELECT entity_id FROM entity_metadata WHERE entity_name = ?",
+        [entity_name]
     ).fetchone()
     
     if not fact:
-        raise ValueError(f"Fact table '{fact_name}' not found in metadata")
+        raise ValueError(f"Entity '{entity_name}' not found in metadata")
     
-    fact_id = fact[0]
+    entity_id = fact[0]
     
     # Insert column metadata
     con.execute(
         """
-        INSERT INTO fact_column_metadata (
-            column_id, fact_id, column_name, data_type, is_nullable,
+        INSERT INTO entity_column_metadata (
+            column_id, entity_id, column_name, data_type, is_nullable,
             is_measure, is_dimension, default_value, description,
             dq_rule_type, dq_rule_params
         )
         VALUES (
-            nextval('fact_column_metadata_seq'),
+            nextval('entity_column_metadata_seq'),
             ?,
             ?,
             ?,
@@ -459,7 +459,7 @@ def add_fact_column(
         )
         """,
         [
-            fact_id,
+            entity_id,
             column_name,
             data_type,
             is_nullable,
@@ -472,5 +472,5 @@ def add_fact_column(
         ]
     )
     
-    result = con.execute("SELECT currval('fact_column_metadata_seq')").fetchone()
+    result = con.execute("SELECT currval('entity_column_metadata_seq')").fetchone()
     return result[0]

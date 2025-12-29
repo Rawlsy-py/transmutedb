@@ -49,28 +49,28 @@ def ensure_ctl_tables(con: Any) -> None:
     # Create sequence for dq_id
     con.execute("CREATE SEQUENCE IF NOT EXISTS dq_results_seq START 1")
     
-    # Create fact_metadata table for fact table configurations
+    # Create entity_metadata table for entity configurations
     con.execute("""
-        CREATE TABLE IF NOT EXISTS fact_metadata (
-            fact_id INTEGER PRIMARY KEY,
-            fact_name VARCHAR NOT NULL,
+        CREATE TABLE IF NOT EXISTS entity_metadata (
+            entity_id INTEGER PRIMARY KEY,
+            entity_name VARCHAR NOT NULL,
             source_table VARCHAR,
             target_schema VARCHAR DEFAULT 'gold',
             description VARCHAR,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(fact_name)
+            UNIQUE(entity_name)
         )
     """)
     
-    # Create sequence for fact_id
-    con.execute("CREATE SEQUENCE IF NOT EXISTS fact_metadata_seq START 1")
+    # Create sequence for entity_id
+    con.execute("CREATE SEQUENCE IF NOT EXISTS entity_metadata_seq START 1")
     
-    # Create fact_column_metadata table for column definitions and rules
+    # Create entity_column_metadata table for column definitions and rules
     con.execute("""
-        CREATE TABLE IF NOT EXISTS fact_column_metadata (
+        CREATE TABLE IF NOT EXISTS entity_column_metadata (
             column_id INTEGER PRIMARY KEY,
-            fact_id INTEGER NOT NULL,
+            entity_id INTEGER NOT NULL,
             column_name VARCHAR NOT NULL,
             data_type VARCHAR NOT NULL,
             is_nullable BOOLEAN DEFAULT TRUE,
@@ -82,10 +82,10 @@ def ensure_ctl_tables(con: Any) -> None:
             dq_rule_params VARCHAR,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(fact_id, column_name),
-            FOREIGN KEY (fact_id) REFERENCES fact_metadata(fact_id)
+            UNIQUE(entity_id, column_name),
+            FOREIGN KEY (entity_id) REFERENCES entity_metadata(entity_id)
         )
     """)
     
     # Create sequence for column_id
-    con.execute("CREATE SEQUENCE IF NOT EXISTS fact_column_metadata_seq START 1")
+    con.execute("CREATE SEQUENCE IF NOT EXISTS entity_column_metadata_seq START 1")
