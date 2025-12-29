@@ -85,7 +85,7 @@ def load_bronze_entity(
     con.execute(f"CREATE SCHEMA IF NOT EXISTS {bronze_schema}")
     
     # Create or replace bronze table using register and CTAS
-    table_name = f"{bronze_schema}.{_validate_identifier(entity_name, 'entity name')}_bronze"
+    table_name = f"{bronze_schema}.{entity_name}_bronze"
     
     # Register the polars dataframe as a DuckDB view temporarily
     con.register("_temp_bronze_df", df)
