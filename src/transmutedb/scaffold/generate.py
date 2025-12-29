@@ -38,6 +38,9 @@ def init_project(path: Path, force: bool = False) -> None:
         "scripts",             # Custom scripts
     ]
     
+    # Folders that should have .gitkeep files to preserve structure
+    gitkeep_folders = ["data/bronze", "data/silver", "data/gold", "logs"]
+    
     # Create folders
     for folder in folders:
         folder_path = project_path / folder
@@ -140,7 +143,7 @@ Thumbs.db
         gitignore_path.write_text(gitignore_content)
     
     # Create .gitkeep files in data directories
-    for folder in ["data/bronze", "data/silver", "data/gold", "logs"]:
+    for folder in gitkeep_folders:
         gitkeep_path = project_path / folder / ".gitkeep"
         if not gitkeep_path.exists():
             gitkeep_path.touch()
