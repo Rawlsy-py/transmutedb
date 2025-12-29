@@ -82,7 +82,8 @@ def ensure_ctl_tables(con: Any) -> None:
             dq_rule_params VARCHAR,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(fact_id, column_name)
+            UNIQUE(fact_id, column_name),
+            FOREIGN KEY (fact_id) REFERENCES fact_metadata(fact_id)
         )
     """)
     

@@ -42,10 +42,11 @@ def load_bronze_fact(
     
     # Calculate row hash for change detection
     # Concatenate all columns (except metadata) and hash
+    # Using SHA256 for better collision resistance
     original_columns = [col for col in source_data.columns]
     df = df.with_columns([
         pl.concat_str(original_columns, separator="|").map_elements(
-            lambda x: hashlib.md5(x.encode()).hexdigest(),
+            lambda x: hashlib.sha256(x.encode()).hexdigest(),
             return_dtype=pl.Utf8
         ).alias("_row_hash")
     ])
@@ -93,11 +94,10 @@ def apply_silver_rules(
         Dictionary with validation results and statistics
     """
     # Get fact metadata
-    fact_meta = con.execute(f"""
-        SELECT fact_id, source_table 
-        FROM fact_metadata 
-        WHERE fact_name = '{fact_name}'
-    """).fetchone()
+    fact_meta = con.execute(
+        "SELECT fact_id, source_table FROM fact_metadata WHERE fact_name = ?",
+        [fact_name]
+    ).fetchone()
     
     if not fact_meta:
         raise ValueError(f"Fact table '{fact_name}' not found in metadata")
@@ -105,12 +105,15 @@ def apply_silver_rules(
     fact_id = fact_meta[0]
     
     # Get column metadata with type and validation rules
-    column_meta = con.execute(f"""
+    column_meta = con.execute(
+        """
         SELECT column_name, data_type, is_nullable, dq_rule_type, dq_rule_params
         FROM fact_column_metadata
-        WHERE fact_id = {fact_id}
+        WHERE fact_id = ?
         ORDER BY column_id
-    """).fetchall()
+        """,
+        [fact_id]
+    ).fetchall()
     
     if not column_meta:
         raise ValueError(f"No column metadata found for fact '{fact_name}'")
@@ -204,11 +207,10 @@ def build_gold_fact(
         Dictionary with build results and statistics
     """
     # Get fact metadata
-    fact_meta = con.execute(f"""
-        SELECT fact_id, target_schema 
-        FROM fact_metadata 
-        WHERE fact_name = '{fact_name}'
-    """).fetchone()
+    fact_meta = con.execute(
+        "SELECT fact_id, target_schema FROM fact_metadata WHERE fact_name = ?",
+        [fact_name]
+    ).fetchone()
     
     if not fact_meta:
         raise ValueError(f"Fact table '{fact_name}' not found in metadata")
@@ -217,12 +219,15 @@ def build_gold_fact(
     target_schema = fact_meta[1] or gold_schema
     
     # Get column metadata
-    column_meta = con.execute(f"""
+    column_meta = con.execute(
+        """
         SELECT column_name, data_type, is_measure, is_dimension
         FROM fact_column_metadata
-        WHERE fact_id = {fact_id}
+        WHERE fact_id = ?
         ORDER BY column_id
-    """).fetchall()
+        """,
+        [fact_id]
+    ).fetchall()
     
     # Create gold schema if it doesn't exist
     con.execute(f"CREATE SCHEMA IF NOT EXISTS {target_schema}")
@@ -301,33 +306,40 @@ def update_fact_metadata(
         fact_id of the created/updated record
     """
     # Check if fact already exists
-    existing = con.execute(f"""
-        SELECT fact_id FROM fact_metadata WHERE fact_name = '{fact_name}'
-    """).fetchone()
+    existing = con.execute(
+        "SELECT fact_id FROM fact_metadata WHERE fact_name = ?",
+        [fact_name]
+    ).fetchone()
     
     if existing:
         # Update existing
-        con.execute(f"""
+        con.execute(
+            """
             UPDATE fact_metadata 
-            SET source_table = '{source_table or ''}',
-                target_schema = '{target_schema}',
-                description = '{description or ''}',
+            SET source_table = ?,
+                target_schema = ?,
+                description = ?,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE fact_name = '{fact_name}'
-        """)
+            WHERE fact_name = ?
+            """,
+            [source_table or '', target_schema, description or '', fact_name]
+        )
         return existing[0]
     else:
         # Insert new
-        con.execute(f"""
+        con.execute(
+            """
             INSERT INTO fact_metadata (fact_id, fact_name, source_table, target_schema, description)
             VALUES (
                 nextval('fact_metadata_seq'),
-                '{fact_name}',
-                '{source_table or ''}',
-                '{target_schema}',
-                '{description or ''}'
+                ?,
+                ?,
+                ?,
+                ?
             )
-        """)
+            """,
+            [fact_name, source_table or '', target_schema, description or '']
+        )
         result = con.execute("SELECT currval('fact_metadata_seq')").fetchone()
         return result[0]
 
@@ -365,9 +377,10 @@ def add_fact_column(
         column_id of the created record
     """
     # Get fact_id
-    fact = con.execute(f"""
-        SELECT fact_id FROM fact_metadata WHERE fact_name = '{fact_name}'
-    """).fetchone()
+    fact = con.execute(
+        "SELECT fact_id FROM fact_metadata WHERE fact_name = ?",
+        [fact_name]
+    ).fetchone()
     
     if not fact:
         raise ValueError(f"Fact table '{fact_name}' not found in metadata")
@@ -375,7 +388,8 @@ def add_fact_column(
     fact_id = fact[0]
     
     # Insert column metadata
-    con.execute(f"""
+    con.execute(
+        """
         INSERT INTO fact_column_metadata (
             column_id, fact_id, column_name, data_type, is_nullable,
             is_measure, is_dimension, default_value, description,
@@ -383,18 +397,31 @@ def add_fact_column(
         )
         VALUES (
             nextval('fact_column_metadata_seq'),
-            {fact_id},
-            '{column_name}',
-            '{data_type}',
-            {is_nullable},
-            {is_measure},
-            {is_dimension},
-            {f"'{default_value}'" if default_value else 'NULL'},
-            {f"'{description}'" if description else 'NULL'},
-            {f"'{dq_rule_type}'" if dq_rule_type else 'NULL'},
-            {f"'{dq_rule_params}'" if dq_rule_params else 'NULL'}
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?
         )
-    """)
+        """,
+        [
+            fact_id,
+            column_name,
+            data_type,
+            is_nullable,
+            is_measure,
+            is_dimension,
+            default_value,
+            description,
+            dq_rule_type,
+            dq_rule_params
+        ]
+    )
     
     result = con.execute("SELECT currval('fact_column_metadata_seq')").fetchone()
     return result[0]
