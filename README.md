@@ -1,5 +1,7 @@
 # TransmuteDB
 
+[![CI](https://github.com/Rawlsy-py/transmutedb/actions/workflows/ci.yml/badge.svg)](https://github.com/Rawlsy-py/transmutedb/actions/workflows/ci.yml)
+
 ⚗️ **TransmuteDB** is an **open-source, parameter-driven data engineering framework** for building **Kimball-style** dimensional models (including **Type 2 SCDs**) in a modern **data lakehouse/warehouse**.
 
 It blends **Laravel-style scaffolding** for developer speed with a **declarative, metadata-driven pipeline engine** that runs on **Python**, **Polars**, or **PySpark** — making it suitable for everything from local dev on DuckDB to production-scale clusters.
