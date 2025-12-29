@@ -8,8 +8,8 @@ It blends **Laravel-style scaffolding** for developer speed with a **declarative
 
 ## 🚀 What It Does
 
-* **CLI-First** — Manage and run pipelines from the terminal with one command.
-* **Parameter-Driven** — All orchestration logic comes from YAML + metadata tables — no hardcoded pipelines.
+* **CLI-First** — Generate all your data engineering pipelines from the terminal.
+* **Parameter-Driven** — All orchestration logic comes from TOML + metadata tables — no hardcoded pipelines.
 * **Kimball-Ready** — Build facts, dimensions, and Type 2 SCD tables automatically from configs.
 * **Data Quality First** — Built-in null, uniqueness, schema, and type checks with quarantine flows.
 * **Flexible Compute** — Runs on Polars or PySpark.
@@ -22,21 +22,7 @@ It blends **Laravel-style scaffolding** for developer speed with a **declarative
 TransmuteDB projects are **self-contained** and follow this structure:
 
 ```
-your_project/
-  src/transmutedb/
-    cli/              # Typer CLI commands
-    core/             # Config models, logging, registry
-    connectors/       # DuckDB, REST, SQL
-    transforms/       # SCD2, bronze→silver→gold helpers
-    templates/        # Jinja2 scaffolding templates
-  pipelines/
-    <domain>/
-      pipeline.yaml   # Orchestration + schedules
-      sources/        # Source system configs
-      models/         # Bronze/Silver/Gold model definitions
-      dq/             # Data quality rules
-  profiles/           # Optional per-developer overrides
-  tests/
+tbd/
 ```
 
 ---
