@@ -2,10 +2,36 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import polars as pl
+
+
+def _validate_identifier(identifier: str, identifier_type: str = "identifier") -> str:
+    """
+    Validate SQL identifier to prevent injection.
+    
+    Args:
+        identifier: The identifier to validate (schema name, table name, column name)
+        identifier_type: Type of identifier for error messages
+    
+    Returns:
+        The validated identifier
+        
+    Raises:
+        ValueError: If identifier is invalid
+    """
+    # Allow alphanumeric, underscore, and limit length
+    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', identifier):
+        raise ValueError(
+            f"Invalid {identifier_type} '{identifier}'. "
+            "Must start with letter or underscore and contain only alphanumeric characters and underscores."
+        )
+    if len(identifier) > 63:  # PostgreSQL/DuckDB limit
+        raise ValueError(f"{identifier_type} '{identifier}' is too long (max 63 characters)")
+    return identifier
 
 
 def load_bronze_fact(
@@ -51,11 +77,15 @@ def load_bronze_fact(
         ).alias("_row_hash")
     ])
     
+    # Validate identifiers
+    _validate_identifier(fact_name, "fact name")
+    _validate_identifier(bronze_schema, "schema name")
+    
     # Create bronze schema if it doesn't exist
     con.execute(f"CREATE SCHEMA IF NOT EXISTS {bronze_schema}")
     
     # Create or replace bronze table using register and CTAS
-    table_name = f"{bronze_schema}.{fact_name}_bronze"
+    table_name = f"{bronze_schema}.{_validate_identifier(fact_name, 'fact name')}_bronze"
     
     # Register the polars dataframe as a DuckDB view temporarily
     con.register("_temp_bronze_df", df)
@@ -93,6 +123,11 @@ def apply_silver_rules(
     Returns:
         Dictionary with validation results and statistics
     """
+    # Validate identifiers
+    _validate_identifier(fact_name, "fact name")
+    _validate_identifier(bronze_schema, "schema name")
+    _validate_identifier(silver_schema, "schema name")
+    
     # Get fact metadata
     fact_meta = con.execute(
         "SELECT fact_id, source_table FROM fact_metadata WHERE fact_name = ?",
@@ -124,6 +159,12 @@ def apply_silver_rules(
     # Build column definitions for CREATE TABLE
     column_defs = []
     for col_name, data_type, is_nullable, dq_rule_type, dq_rule_params in column_meta:
+        # Validate column name and data type
+        _validate_identifier(col_name, "column name")
+        # Basic validation of data type (allow common SQL types)
+        if not re.match(r'^[A-Z]+(\([0-9,\s]+\))?$', data_type.upper().strip()):
+            raise ValueError(f"Invalid data type '{data_type}' for column '{col_name}'")
+        
         null_constraint = "NULL" if is_nullable else "NOT NULL"
         column_defs.append(f"{col_name} {data_type} {null_constraint}")
     
@@ -206,6 +247,11 @@ def build_gold_fact(
     Returns:
         Dictionary with build results and statistics
     """
+    # Validate identifiers
+    _validate_identifier(fact_name, "fact name")
+    _validate_identifier(silver_schema, "schema name")
+    _validate_identifier(gold_schema, "schema name")
+    
     # Get fact metadata
     fact_meta = con.execute(
         "SELECT fact_id, target_schema FROM fact_metadata WHERE fact_name = ?",
@@ -217,6 +263,7 @@ def build_gold_fact(
     
     fact_id = fact_meta[0]
     target_schema = fact_meta[1] or gold_schema
+    _validate_identifier(target_schema, "target schema name")
     
     # Get column metadata
     column_meta = con.execute(
@@ -239,6 +286,8 @@ def build_gold_fact(
     all_cols_ordered = []
     
     for col_name, data_type, is_measure, is_dimension in column_meta:
+        # Validate column name from metadata
+        _validate_identifier(col_name, "column name")
         all_cols_ordered.append(col_name)
         if is_measure:
             measure_cols.append(col_name)
