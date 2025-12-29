@@ -511,12 +511,15 @@ def build_type2_dimension(
                 AND src._is_valid = TRUE
         """)
         
+        # Build proper column list with src prefix
+        src_cols_str = ", ".join([f"src.{col}" for col in all_cols])
+        
         # Insert new versions of changed records (match on business key + different hash)
         con.execute(f"""
             INSERT INTO {gold_table}
             SELECT 
                 nextval('{entity_name}_key_seq') as {entity_name}_key,
-                src.{all_cols_str.replace(', ', ', src.')},
+                {src_cols_str},
                 src._valid_from,
                 NULL as _valid_to,
                 TRUE as _is_current,
@@ -536,14 +539,12 @@ def build_type2_dimension(
                 )
         """)
         
-        changed_rows = updated_rows  # Same as updated_rows
-        
         # Insert completely new records (business keys not in dimension)
         con.execute(f"""
             INSERT INTO {gold_table}
             SELECT 
                 nextval('{entity_name}_key_seq') as {entity_name}_key,
-                src.{all_cols_str.replace(', ', ', src.')},
+                {src_cols_str},
                 src._valid_from,
                 NULL as _valid_to,
                 TRUE as _is_current,
@@ -566,7 +567,7 @@ def build_type2_dimension(
             "total_rows": total_rows,
             "new_rows": new_rows,
             "updated_rows": updated_rows,
-            "changed_rows": changed_rows,
+            "changed_rows": updated_rows,  # Same as updated_rows
             "business_keys": business_keys,
             "tracked_columns": tracked_cols,
         }
