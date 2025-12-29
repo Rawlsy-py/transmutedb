@@ -34,7 +34,7 @@ dev = [
 ]
 
 [project.scripts]
-transmutedb = "transmutedb.cli.main:app"
+transmutedb = "transmutedb.cli:app_main"
 
 [tool.ruff]
 line-length = 100
