@@ -78,14 +78,14 @@ def load_bronze_entity(
     ])
     
     # Validate identifiers
-    _validate_identifier(entity_name, "fact name")
+    _validate_identifier(entity_name, "entity name")
     _validate_identifier(bronze_schema, "schema name")
     
     # Create bronze schema if it doesn't exist
     con.execute(f"CREATE SCHEMA IF NOT EXISTS {bronze_schema}")
     
     # Create or replace bronze table using register and CTAS
-    table_name = f"{bronze_schema}.{_validate_identifier(entity_name, 'fact name')}_bronze"
+    table_name = f"{bronze_schema}.{_validate_identifier(entity_name, 'entity name')}_bronze"
     
     # Register the polars dataframe as a DuckDB view temporarily
     con.register("_temp_bronze_df", df)
@@ -124,20 +124,20 @@ def process_silver_entity(
         Dictionary with validation results and statistics
     """
     # Validate identifiers
-    _validate_identifier(entity_name, "fact name")
+    _validate_identifier(entity_name, "entity name")
     _validate_identifier(bronze_schema, "schema name")
     _validate_identifier(silver_schema, "schema name")
     
-    # Get fact metadata
-    fact_meta = con.execute(
+    # Get entity metadata
+    entity_meta = con.execute(
         "SELECT entity_id, source_table FROM entity_metadata WHERE entity_name = ?",
         [entity_name]
     ).fetchone()
     
-    if not fact_meta:
+    if not entity_meta:
         raise ValueError(f"Entity '{entity_name}' not found in metadata")
     
-    entity_id = fact_meta[0]
+    entity_id = entity_meta[0]
     
     # Get column metadata with type and validation rules
     column_meta = con.execute(
@@ -151,7 +151,7 @@ def process_silver_entity(
     ).fetchall()
     
     if not column_meta:
-        raise ValueError(f"No column metadata found for fact '{entity_name}'")
+        raise ValueError(f"No column metadata found for entity '{entity_name}'")
     
     # Create silver schema if it doesn't exist
     con.execute(f"CREATE SCHEMA IF NOT EXISTS {silver_schema}")
@@ -248,21 +248,21 @@ def build_gold_entity(
         Dictionary with build results and statistics
     """
     # Validate identifiers
-    _validate_identifier(entity_name, "fact name")
+    _validate_identifier(entity_name, "entity name")
     _validate_identifier(silver_schema, "schema name")
     _validate_identifier(gold_schema, "schema name")
     
-    # Get fact metadata
-    fact_meta = con.execute(
+    # Get entity metadata
+    entity_meta = con.execute(
         "SELECT entity_id, target_schema FROM entity_metadata WHERE entity_name = ?",
         [entity_name]
     ).fetchone()
     
-    if not fact_meta:
+    if not entity_meta:
         raise ValueError(f"Entity '{entity_name}' not found in metadata")
     
-    entity_id = fact_meta[0]
-    target_schema = fact_meta[1] or gold_schema
+    entity_id = entity_meta[0]
+    target_schema = entity_meta[1] or gold_schema
     _validate_identifier(target_schema, "target schema name")
     
     # Get column metadata
@@ -347,14 +347,14 @@ def update_entity_metadata(
     Args:
         con: Database connection
         entity_name: Name of the entity
-        source_table: Source table/query for the fact
+        source_table: Source table/query for the entity
         target_schema: Target schema for gold tier
         description: Description of the entity
     
     Returns:
         entity_id of the created/updated record
     """
-    # Check if fact already exists
+    # Check if entity already exists
     existing = con.execute(
         "SELECT entity_id FROM entity_metadata WHERE entity_name = ?",
         [entity_name]
@@ -426,15 +426,15 @@ def add_entity_column(
         column_id of the created record
     """
     # Get entity_id
-    fact = con.execute(
+    entity = con.execute(
         "SELECT entity_id FROM entity_metadata WHERE entity_name = ?",
         [entity_name]
     ).fetchone()
     
-    if not fact:
+    if not entity:
         raise ValueError(f"Entity '{entity_name}' not found in metadata")
     
-    entity_id = fact[0]
+    entity_id = entity[0]
     
     # Insert column metadata
     con.execute(
