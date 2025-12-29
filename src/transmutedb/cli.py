@@ -187,7 +187,7 @@ def dq_lint_cmd(
 
 
 # --------------------------- LOGS ------------------------------------------
-@logs_app.command("tail", help="Tail recent run logs from ctl.run_log (DuckDB).")
+@logs_app.command("tail", help="Tail recent run logs from run_log table (DuckDB).")
 def logs_tail(
     pipeline: Optional[str] = typer.Option(None, "--pipeline"),
     limit: int = typer.Option(50, "--limit"),
@@ -202,7 +202,7 @@ def logs_tail(
         con,
         f"""
         SELECT started_at, pipeline, step, entity, status, rows_in, rows_out, error_message
-        FROM ctl.run_log
+        FROM run_log
         {where}
         ORDER BY started_at DESC
         LIMIT {limit}

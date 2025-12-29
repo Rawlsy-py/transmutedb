@@ -55,48 +55,10 @@ def init_project(path: Path, force: bool = False) -> None:
     if not db_path.exists() or force:
         con = duckdb.connect(str(db_path))
         
-        # Create run_log table for pipeline execution tracking
-        con.execute("""
-            CREATE TABLE IF NOT EXISTS run_log (
-                run_id INTEGER PRIMARY KEY,
-                pipeline VARCHAR,
-                step VARCHAR,
-                entity VARCHAR,
-                started_at TIMESTAMP,
-                completed_at TIMESTAMP,
-                status VARCHAR,
-                rows_in BIGINT,
-                rows_out BIGINT,
-                error_message VARCHAR
-            )
-        """)
-        
-        # Create sequence for run_id
-        con.execute("""
-            CREATE SEQUENCE IF NOT EXISTS run_log_seq START 1
-        """)
-        
-        # Create dq_results table for data quality checks
-        con.execute("""
-            CREATE TABLE IF NOT EXISTS dq_results (
-                dq_id INTEGER PRIMARY KEY,
-                run_id INTEGER,
-                pipeline VARCHAR,
-                entity VARCHAR,
-                check_name VARCHAR,
-                check_type VARCHAR,
-                passed BOOLEAN,
-                rows_checked BIGINT,
-                rows_failed BIGINT,
-                created_at TIMESTAMP,
-                FOREIGN KEY (run_id) REFERENCES run_log(run_id)
-            )
-        """)
-        
-        # Create sequence for dq_id
-        con.execute("""
-            CREATE SEQUENCE IF NOT EXISTS dq_results_seq START 1
-        """)
+        # Use ensure_ctl_tables from the ctl.schema module to create all control tables
+        # Import here to avoid circular dependency
+        from transmutedb.ctl.schema import ensure_ctl_tables
+        ensure_ctl_tables(con)
         
         con.close()
     
